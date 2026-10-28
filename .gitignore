@@ -1,0 +1,16 @@
+# 运行期产物（含真实节点/凭证，禁止入库）
+snapshot.json
+gp_nodes.tsv
+se_nodes.tsv
+gp_alive_*.txt
+se_alive_*.txt
+stress_round1.json
+mihomo_gp.yaml
+xray_gp.json
+initialize_plain.json
+reloadlist.json
+*.log
+apk_sm/
+jadx_out/
+__pycache__/
+*.pyc

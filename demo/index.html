@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>VPN US (com.giamping.usavpn) — 逆向 R1 控制台</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#0b0f14;--card:#121821;--line:#1f2a37;--fg:#e6edf3;--mut:#8b98a5;--ok:#2ea043;--bad:#f85149;--acc:#58a6ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif;padding:24px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:12px;margin-bottom:18px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .card .k{color:var(--mut);font-size:12px}
+  .card .v{font-size:22px;font-weight:600;margin-top:4px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  button{background:#1f6feb;color:#fff;border:0;border-radius:8px;padding:9px 14px;font-size:13px;cursor:pointer}
+  button.ghost{background:#21262d;border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:progress}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--mut);font-weight:500;position:sticky;top:0;background:var(--card)}
+  .scroll{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+  .ok{color:var(--ok)}.bad{color:var(--bad)}.mut{color:var(--mut)}
+  .tabs{display:flex;gap:6px;margin:8px 0}
+  .tab{padding:6px 12px;border:1px solid var(--line);border-radius:8px;cursor:pointer;color:var(--mut)}
+  .tab.on{color:#fff;border-color:var(--acc);background:#0d2340}
+  footer{color:var(--mut);font-size:12px;margin-top:22px;border-top:1px solid var(--line);padding-top:12px}
+  code{background:#0d1117;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<h1>VPN US · <span class="mut">com.giamping.usavpn v20260805</span> — 逆向 R1 控制台</h1>
+<div class="sub">AES-256-CBC 信封 API 全还原 · 双节点池（自营 gp / VPNGate 公开 se）· 本地 TCP 压测</div>
+
+<div class="grid" id="cards">
+  <div class="card"><div class="k">网关</div><div class="v" id="gw">-</div></div>
+  <div class="card"><div class="k">gp 节点（自营）</div><div class="v" id="gp">-</div></div>
+  <div class="card"><div class="k">se 节点（VPNGate）</div><div class="v" id="se">-</div></div>
+  <div class="card"><div class="k">唯一出口 IP</div><div class="v" id="uip">-</div></div>
+  <div class="card"><div class="k">刷新周期</div><div class="v" id="ttl">-</div></div>
+  <div class="card"><div class="k">上游看到的本机 IP</div><div class="v" id="cip" style="font-size:15px">-</div></div>
+</div>
+
+<div class="row">
+  <button id="btnHarvest">重新收割（INITIALIZE）</button>
+  <button id="btnScan" class="ghost">本地 TCP 压测</button>
+  <button id="btnExportGp" class="ghost">导出 gp 清单</button>
+  <button id="btnExportSe" class="ghost">导出 se 清单</button>
+  <button id="btnReload" class="ghost">刷新视图</button>
+</div>
+
+<div class="tabs">
+  <div class="tab on" data-pool="gp">自营 gp 池</div>
+  <div class="tab" data-pool="se">VPNGate se 池</div>
+</div>
+<div class="scroll"><table id="tbl"><thead></thead><tbody></tbody></table></div>
+
+<footer>
+  协议：<code>GET {gateway}?message=b64(AES-256-CBC(明文))</code>（'+'→'CRYPTO'）· 密钥取
+  <code>libsecurity.so</code> 内 XOR 表 · 响应同密钥解密。<br>
+  仅用于安全研究；节点凭证与使用权归属上游，接入生产请自行承担合规责任。
+</footer>
+
+<script>
+const $ = s => document.querySelector(s);
+let POOL = 'gp';
+
+function card(k,v){ }
+async function status(){
+  const r = await fetch('/api/status'); const d = await r.json();
+  $('#gw').textContent = (d.gateway||'').replace('https://','').split('/')[0] || '-';
+  $('#gw').style.fontSize = '13px';
+  $('#gp').textContent = d.gp_total ?? '-';
+  $('#se').textContent = d.se_total ?? '-';
+  $('#uip').textContent = `${d.gp_unique_ip} / ${d.se_unique_ip}`;
+  $('#ttl').textContent = d.refresh_seconds ? `${d.refresh_seconds.gp}s / ${d.refresh_seconds.se}s` : '-';
+  $('#cip').textContent = d.clientip_seen_by_upstream || '-';
+  if (d.scan){
+    const s = d.scan;
+    const alive = k => `${s[k].filter(x=>x.ok).length}/${s[k].length}`;
+    document.title = `gp:443 ${alive('gp:443')} | gp:1080 ${alive('gp:1080')} | se ${alive('se')}`;
+  }
+}
+async function nodes(){
+  const r = await fetch('/api/nodes?pool='+POOL); const d = await r.json();
+  const t = $('#tbl');
+  if (POOL === 'gp'){
+    t.querySelector('thead').innerHTML = '<tr><th>code</th><th>IP</th><th>城市</th><th>国家</th><th>洲</th><th>负载</th><th>栈</th><th>ISP</th></tr>';
+    t.querySelector('tbody').innerHTML = d.items.map(n=>
+      `<tr><td>${n.code}</td><td>${n.ip}</td><td>${n.city}</td><td>${n.country}</td><td>${n.continent}</td><td>${n.load}</td><td>${n.dual}</td><td class="mut">${(n.isp||'').split(' | ')[0]}</td></tr>`).join('');
+  } else {
+    t.querySelector('thead').innerHTML = '<tr><th>id</th><th>host</th><th>IP</th><th>TCP</th><th>UDP</th><th>ping</th><th>会话</th><th>地区</th></tr>';
+    t.querySelector('tbody').innerHTML = d.items.map(n=>
+      `<tr><td>${n.id}</td><td>${n.host}</td><td>${n.ip}</td><td>${n.tcp}</td><td>${n.udp}</td><td>${n.ping}</td><td class="mut">${(n.sessions||'').slice(0,28)}</td><td>${(n.country||'').split(' ~ ')[0]}</td></tr>`).join('');
+  }
+}
+const wrap = async (btn, fn) => { btn.disabled=true; const old=btn.textContent; btn.textContent='执行中…';
+  try { await fn(); } catch(e){ alert(e); } finally { btn.disabled=false; btn.textContent=old; } };
+
+$('#btnHarvest').onclick = e => wrap(e.target, async ()=>{
+  const r = await fetch('/api/harvest',{method:'POST'}); const d = await r.json();
+  if(!d.ok) throw new Error(d.error);
+  await status(); await nodes();
+  alert(`已重新收割：gp=${d.gp} se=${d.se}\n网关 ${d.gateway}`);
+});
+$('#btnScan').onclick = e => wrap(e.target, async ()=>{
+  await fetch('/api/scan',{method:'POST'});
+  const r = await fetch('/api/status'); const d = await r.json();
+  const s = d.scan, alive = k => `${s[k].filter(x=>x.ok).length}/${s[k].length}`;
+  alert(`压测完成\ngp:443 ${alive('gp:443')}\ngp:1080 ${alive('gp:1080')}\nse:tcp ${alive('se')}`);
+  await status();
+});
+$('#btnExportGp').onclick = () => location.href='/api/export?pool=gp&fmt=plain';
+$('#btnExportSe').onclick = () => location.href='/api/export?pool=se&fmt=plain';
+$('#btnReload').onclick = async () => { await status(); await nodes(); };
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on'); POOL=t.dataset.pool; nodes();
+});
+status(); nodes();
+</script>
+</body>
+</html>
