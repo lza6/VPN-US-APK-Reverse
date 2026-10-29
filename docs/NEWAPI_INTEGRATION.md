@@ -76,11 +76,35 @@ curl -s http://<newapi>/api/twoapi/proxy_pool | head
 
 只看池快照有条目 ≠ 流量真走了它。
 
-## 6. 常驻健康检查（必须有）
+## 6. 常驻健康检查（必须有，参考实现已随仓库提供）
+
+仓库里 `tools/health_loop.py` 就是这一层，四条规则全实现且已本地实测（活/死/exit-mismatch 三种路径）：
+
+```bash
+# 单轮
+python tools/health_loop.py --in proxies.txt --out proxies_alive.txt --require-exit-eq-node
+# 常驻，每 300s 一轮
+python tools/health_loop.py --in proxies.txt --out proxies_alive.txt \
+    --require-exit-eq-node --fail-threshold 2 --loop 300
+# 输出即 new-api 的清单
+export TRYINGOPEN_PROXY_FILE=/opt/newapi/proxies_alive.txt
+```
+
+实测口径（对着本机 `socks5://127.0.0.1:10808` 跑）：死节点 → `never-passed` 不入池；
+活节点 → 入池并记 `exit_ip`；加 `--require-exit-eq-node` 后因出口 IP ≠ 节点 IP 被摘除 —— 三种行为都符合预期。
+
+原理：
 
 **new-api 不验住宅/静态源。** `TraceProbes()` 里 `if e.source != "free" { continue }`
 （`proxy_pool.go:1180`），而 `TRYINGOPEN_PROXY_FILE` 加载的条目 `source` 恒为 `"residential"`
 → 死节点会被反复选中，表现为"渠道高概率超时"。
+
+new-api 侧的那两条源码事实（读源码确认）：
+
+- `proxy_pool.go:348 LoadProxies()`：`TRYINGOPEN_PROXY_FILE` 支持**逗号分隔多文件**，
+  每行 `socks5://host:port` / `http://user:pass@host:port`，`#` 跳过；加载后
+  `source="residential"`、`healthScore=1.0`、`origin=<文件名>`（所以多池各自成卡片）。
+- `proxy_pool.go:1180`：`TraceProbes()` 里 `if e.source != "free" { continue }` —— **你的清单不会被验**。
 
 所以转换层必须自带健康检查器重写清单：
 
@@ -122,3 +146,27 @@ curl -s http://<newapi>/api/twoapi/proxy_pool | head
 2. 换网关：把 `tools/client.py: GATEWAYS` 的顺序调换（三源内容一致，只有可达性差异）；
 3. 换版本：`python tools/keyderive.py "<新 APK>"` 重算 key/iv，再用
    `VPNUS_KEY` / `VPNUS_IV` 环境变量覆盖；若 `adsids` 变了，按 `docs/PROTOCOL.md` §1 重新拼接。
+
+---
+
+## 11. 给「对接会话」的开工提示词（直接复制粘贴）
+
+```
+项目：把一个新收割的代理池接进 new-api 的 tryingopen 渠道。
+先读这两个文件，不要先动手：
+  D:/apk-analysis/vpn-us-public/docs/NEWAPI_INTEGRATION.md
+  D:/apk-analysis/vpn-us-public/docs/REVERSE_REPORT.md  §3（确认哪些池子不能碰）
+仓库：https://github.com/lza6/VPN-US-APK-Reverse
+
+要求：
+1. new-api 侧只允许改环境变量 TRYINGOPEN_PROXY_FILE，不许改业务代码；
+2. 只接 se 池（VPNGate 公开源）。gp 池是上游自租基础设施，凭证可得≠有权使用，禁止入池；
+3. 转换层按 §2 路线 A：VPNGate 节点 → OpenVPN(UDP/1194 或 TCP/443) → 本地 socks5 → 清单文件；
+   OpenVPN 必须加全套 --pull-filter ignore（register-dns / block-outside-dns /
+   dhcp-release / dhcp-renew / dhcp-pre-release / tap-sleep），否则会以 Options error 中断；
+4. 清单必须由 tools/health_loop.py 生成（真实 SOCKS5 握手 + 出口 IP 校验 + 双阈值 + 原子重写），
+   不许把 harvest 结果直接喂给 new-api；
+5. 验收按 §5 三层：隧道层（出口国）→ 池层（/api/twoapi/proxy_pool 有条目且 origin 正确分卡片）→
+   业务层（发真请求并核对上游侧来源 IP）。只看池快照有条目不算通过；
+6. 交付时报：改了什么、跑了哪些命令、每层实际输出、剩余风险。没跑过的验证明确写"未验证"。
+```

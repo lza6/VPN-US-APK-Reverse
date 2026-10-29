@@ -19,7 +19,8 @@ REALITY 双内核认证失败、SOCKS5 凭据不匹配。原因与下一步写�
 | gp 池 `:1080` SOCKS5 | ❌ 271/271 鉴权失败 |
 | se 池 OpenVPN 拨号 | ⏳ 待验证（需 openvpn 客户端） |
 | 本地 TCP 压测 | ✅ gp:443 248–265/741、gp:1080 269–271/741、se:tcp 304–306/921 |
-| 演示控制台 | ✅ `:8950`（status / harvest / scan / nodes / export） |
+| 演示控制台 | ✅ `:8950`（status / harvest / scan / nodes / export，见 `docs/screenshots/demo.png`） |
+| 健康检查器 `tools/health_loop.py` | ✅ 实测（活/死/exit-mismatch 三路径行为正确） |
 
 ## 快速开始
 
@@ -56,6 +57,7 @@ tools/probe_socks.py   SOCKS5 握手 + 出口 IP 校验
 tools/tcpfwd.py        本地 TCP -> SOCKS5 转发器（给内核做 dialerProxy 用）
 tools/gen_xray.py      gp 池 -> Xray-core 配置（vless+reality）
 tools/gen_mihomo.py    gp 池 -> mihomo 配置
+tools/health_loop.py   代理清单健康检查器（真正能喂给 new-api 的那一层，已实测）
 tools/dis_refs.py      原生库 rodata 引用扫描（手工分析用）
 demo/server.py         演示控制台（stdlib，无依赖）
 demo/index.html        控制台前端
@@ -63,6 +65,7 @@ docs/PROTOCOL.md       ★实现手册★ 常量/信封/字段/30 行最小实�
 docs/REVERSE_REPORT.md 逆向报告：样本/加固/双池/实测/合规/方法论
 docs/NEWAPI_INTEGRATION.md  new-api 对接交接包（含"不要接什么"）
 samples/               脱敏节点样表（IP 已换文档网段）
+docs/screenshots/      演示控制台截图（数据已脱敏）
 ```
 
 ## 样本信息
